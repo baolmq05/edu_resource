@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function kiểm tra đăng nhập
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function lấy dữ liệu user profile hiện tại
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    // Helper kiểm tra vai trò Quản trị viên (Admin)
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserData().role == 'admin' ||
+        request.auth.token.admin == true
+      );
+    }
+    
+    // Helper kiểm tra vai trò Giáo viên (Teacher) hoặc Admin
+    function isTeacher() {
+      return isAuthenticated() && (
+        getUserData().role == 'teacher' ||
+        getUserData().role == 'admin'
+      );
+    }
+
+    // 1. Bộ sưu tập Người dùng (users)
+    match /users/{userId} {
+      // Người dùng đã đăng nhập có thể xem thông tin cơ bản; Admin xem toàn bộ
+      allow read: if isAuthenticated();
+      // Người dùng tự cập nhật profile cá nhân hoặc Admin có toàn quyền
+      allow create: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // 2. Ngân hàng câu hỏi (questions)
+    match /questions/{questionId} {
+      // Bất kỳ ai đã đăng nhập đều có thể đọc câu hỏi để làm bài hoặc tham khảo
+      allow read: if isAuthenticated();
+      // Chỉ Giáo viên hoặc Admin mới có quyền tạo câu hỏi mới
+      allow create: if isTeacher();
+      // Giáo viên chỉ sửa câu hỏi do mình tạo, Admin sửa được tất cả
+      allow update: if isTeacher() && (resource.data.createdById == request.auth.uid || isAdmin());
+      // Giáo viên chỉ xóa câu hỏi do mình tạo, Admin xóa được tất cả
+      allow delete: if isTeacher() && (resource.data.createdById == request.auth.uid || isAdmin());
+    }
+
+    // 3. Danh sách Bài kiểm tra (exams)
+    match /exams/{examId} {
+      // Bài kiểm tra đã công bố (published) thì mọi user đăng nhập đều được đọc;
+      // Bản nháp (draft) chỉ giáo viên tạo ra hoặc Admin mới được đọc
+      allow read: if isAuthenticated() && (
+        resource.data.status == 'published' ||
+        isTeacher()
+      );
+      // Chỉ giáo viên hoặc Admin mới được tạo đề thi
+      allow create: if isTeacher();
+      // Giáo viên quản lý đề của mình hoặc Admin
+      allow update: if isTeacher() && (resource.data.createdById == request.auth.uid || isAdmin());
+      allow delete: if isTeacher() && (resource.data.createdById == request.auth.uid || isAdmin());
+    }
+
+    // 4. Kết quả làm bài thi (examResults)
+    match /examResults/{resultId} {
+      // Học sinh xem kết quả của chính mình; Giáo viên & Admin xem được tất cả để tổng hợp báo cáo
+      allow read: if isAuthenticated() && (
+        resource.data.studentId == request.auth.uid ||
+        isTeacher()
+      );
+      // Học sinh nộp bài thi
+      allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid;
+      // Không cho phép học sinh tự ý sửa điểm sau khi nộp
+      allow update: if isAdmin();
+      // Chỉ Admin được xóa bài thi
+      allow delete: if isAdmin();
+    }
+
+    // 5. Kế hoạch bài dạy (lessonPlans)
+    match /lessonPlans/{planId} {
+      // Tài liệu học tập công khai cho học sinh và giáo viên cùng trường tham khảo
+      allow read: if isAuthenticated();
+      allow create: if isTeacher();
+      allow update: if isTeacher() && (resource.data.teacherId == request.auth.uid || isAdmin());
+      allow delete: if isTeacher() && (resource.data.teacherId == request.auth.uid || isAdmin());
+    }
+
+    // 6. Slide bài dạy (slides)
+    match /slides/{slideId} {
+      allow read: if isAuthenticated();
+      allow create: if isTeacher();
+      allow update: if isTeacher() && (resource.data.teacherId == request.auth.uid || isAdmin());
+      allow delete: if isTeacher() && (resource.data.teacherId == request.auth.uid || isAdmin());
+    }
+  }
+}
